@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import functools
 from itertools import chain
 
 import pytest
@@ -56,14 +57,17 @@ class LoadGroupStressScheduler(LoadGroupScheduling):
                 work_unit[curr_nodeid] = False
             self.workqueue[scope] = work_unit
 
-        # If not enough tests in current node, add more scopes if available or repeat tests
+        # Assign more work if still not enough space
         while (
             self._pending_of(self.assigned_work[node]) < MIN_TESTS_PER_NODE
             and self.workqueue
         ):
             self._assign_work_unit(node)
-        while self._pending_of(self.assigned_work[node]) < MIN_TESTS_PER_NODE:
-            self._reassign_work_units(node)
+        assert self._pending_of(self.assigned_work[node]) > 0
+
+        # Deal with not enough tests in node situation (see comment in `schedule()`)
+        if self._pending_of(self.assigned_work[node]) < MIN_TESTS_PER_NODE:
+            node.sendcommand("shutdown")
 
     def _assign_work_unit(self, node: WorkerController) -> None:
         """Assign a work unit to a node."""
@@ -178,10 +182,16 @@ class LoadGroupStressScheduler(LoadGroupScheduling):
             if not added:
                 break
 
-        # If we still have nodes without enough tests and we exhausted the workqueue, start re-running existing tests
+        # `xdist.remote.WorkerInteractor.run_one_test()`` requires 2 items "in the
+        # chamber" to start a test due to `pytest_runtest_protocol(item, nextitem)`
+        # requiring to have the next test. To overcome this, we send a "shutdown"
+        # which will translate to `nextitem=None`
+        # NOTE: In `pytest_plugin_registered` hook we supress the shutdown.
         for node in self.nodes:
-            while self._pending_of(self.assigned_work[node]) < MIN_TESTS_PER_NODE:
-                self._reassign_work_units(node)
+            assert self._pending_of(self.assigned_work[node]) > 0
+            if self._pending_of(self.assigned_work[node]) < MIN_TESTS_PER_NODE:
+                node.sendcommand("shutdown")
+                break
 
 
 @pytest.hookimpl()
@@ -192,6 +202,25 @@ def pytest_xdist_make_scheduler(config: pytest.Config, log):
     if dist == "loadgroup":
         return LoadGroupStressScheduler(config, log)
     raise ValueError(f'xstress does not support "{dist}" distmode')
+
+
+@pytest.hookimpl
+def pytest_plugin_registered(plugin, manager: pytest.PytestPluginManager):
+    # Supress any shutdown received after running the `xdist.remote.WorkerInteractor.run_one_test()` function
+    if type(plugin).__name__ == "WorkerInteractor":
+        # NOTE: Haven't found a better way to get config at this time
+        if not plugin.config.getvalue("xstress"):
+            return
+
+        func = plugin.run_one_test
+
+        @functools.wraps(func)
+        def wrapper(*args, **kwargs):
+            func(*args, **kwargs)
+            if "Marker.SHUTDOWN" in repr(plugin.nextitem_index):
+                plugin.nextitem_index = plugin._get_next_item_index()
+
+        plugin.run_one_test = wrapper
 
 
 @pytest.hookimpl()

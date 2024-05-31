@@ -1,4 +1,5 @@
 import contextlib
+import logging
 import random
 import subprocess
 import threading
@@ -9,6 +10,9 @@ from typing import List
 import pytest
 import werkzeug
 from flask import Flask, request
+
+# This spams on each test completed elsewise
+logging.getLogger("werkzeug").setLevel(logging.ERROR)
 
 
 @contextlib.contextmanager
@@ -67,6 +71,7 @@ def run_tests(fn, mark: str, *args):
             "python_functions='_test_*'",
             "-m",
             mark,
+            "-v",
         ]
         + list(args),
         fn,
@@ -382,3 +387,39 @@ def test_verymultimultiple():
         assert (
             count >= 25
         )  # since 200 tests are run, this should always be true mathematically
+
+
+@pytest.fixture
+def regfix():
+    return 5
+
+
+@pytest.mark.xdist_group(name="f")
+@pytest.mark.regfixture
+def _test_regfixture(regfix):
+    pass
+
+
+def test_regfixture():
+    datas = list()
+    lock = threading.Lock()
+
+    def _on_update(x):
+        with lock:
+            datas.append(x)
+
+    def _predicate():
+        with lock:
+            return len(datas) > 10
+
+    with run_tests(
+        _on_update, "regfixture", "-n2", "--dist", "loadgroup", "--xstress"
+    ) as p:
+        assert wait_until(_predicate)
+        p.kill()
+        p.wait()
+
+    worker = datas[0]["xdist_worker"]
+    assert worker
+    for x in datas:
+        assert x["result"] == "pass"
