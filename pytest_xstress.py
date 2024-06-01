@@ -37,12 +37,7 @@ class LoadGroupStressScheduler(LoadGroupScheduling):
     def mark_test_complete(
         self, node: WorkerController, item_index: int, duration: float = 0
     ) -> None:
-        """Mark test item as completed by node.
-
-        Called by the hook:
-
-        - ``DSession.worker_testreport``.
-        """
+        """Add more tests to node if `pending_tests_in_node<MIN_TESTS_PER_NODE`"""
         nodeid = self.registered_collections[node][item_index]
         scope = self._split_scope(nodeid)
 
@@ -66,7 +61,7 @@ class LoadGroupStressScheduler(LoadGroupScheduling):
             self._reassign_work_units(node)
 
     def _assign_work_unit(self, node: WorkerController) -> None:
-        """Assign a work unit to a node."""
+        """Assign a work unit from `self.workqueue` to a node."""
         assert self.workqueue
 
         # Grab a unit of work
@@ -94,6 +89,7 @@ class LoadGroupStressScheduler(LoadGroupScheduling):
         node.send_runtest_some(nodeids_indexes)
 
     def _reassign_work_units(self, node: WorkerController):
+        """Ensure `pending_tests_in_node>=MIN_TESTS_PER_NODE` by reassigning more scopes"""
         for curr_scope in self.assigned_work[node]:
             if self._pending_of(self.assigned_work[node]) >= MIN_TESTS_PER_NODE:
                 break
@@ -186,6 +182,7 @@ class LoadGroupStressScheduler(LoadGroupScheduling):
 
 @pytest.hookimpl()
 def pytest_xdist_make_scheduler(config: pytest.Config, log):
+    """Switch to our cool scheduler if --xstress"""
     if not config.getvalue("xstress"):
         return None
     dist = config.getvalue("dist")
