@@ -387,3 +387,39 @@ def test_verymultimultiple():
         assert (
             count >= 25
         )  # since 200 tests are run, this should always be true mathematically
+
+
+@pytest.fixture
+def regfix():
+    return 5
+
+
+@pytest.mark.xdist_group(name="f")
+@pytest.mark.regfixture
+def _test_regfixture(regfix):
+    pass
+
+
+def test_regfixture():
+    datas = list()
+    lock = threading.Lock()
+
+    def _on_update(x):
+        with lock:
+            datas.append(x)
+
+    def _predicate():
+        with lock:
+            return len(datas) > 10
+
+    with run_tests(
+        _on_update, "regfixture", "-n2", "--dist", "loadgroup", "--xstress"
+    ) as p:
+        assert wait_until(_predicate)
+        p.kill()
+        p.wait()
+
+    worker = datas[0]["xdist_worker"]
+    assert worker
+    for x in datas:
+        assert x["result"] == "pass"

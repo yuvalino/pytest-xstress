@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import functools
 from itertools import chain
 
 import pytest
@@ -189,6 +190,26 @@ def pytest_xdist_make_scheduler(config: pytest.Config, log):
     if dist == "loadgroup":
         return LoadGroupStressScheduler(config, log)
     raise ValueError(f'xstress does not support "{dist}" distmode')
+
+
+@pytest.hookimpl
+def pytest_plugin_registered(plugin, manager: pytest.PytestPluginManager):
+    """Workaround until PR#1091 in pytest-xdist is merged"""
+    if type(plugin).__name__ == "WorkerInteractor":
+        # NOTE: Haven't found a better way to get config at this time
+        if not plugin.config.getvalue("xstress"):
+            return
+
+        # Switch `nextitem=item` to `nextitem=None` when calling `pytest_runtest_protocol`
+        func = plugin.config.hook.pytest_runtest_protocol
+
+        @functools.wraps(func)
+        def wrapper(item, nextitem, *args, **kwargs):
+            if item == nextitem:
+                nextitem = None
+            func(item=item, nextitem=nextitem, *args, **kwargs)
+
+        plugin.config.hook.pytest_runtest_protocol = wrapper
 
 
 @pytest.hookimpl()
