@@ -1,4 +1,5 @@
 import contextlib
+import logging
 import random
 import subprocess
 import threading
@@ -9,6 +10,9 @@ from typing import List
 import pytest
 import werkzeug
 from flask import Flask, request
+
+# This spams on each test completed elsewise
+logging.getLogger("werkzeug").setLevel(logging.ERROR)
 
 
 @contextlib.contextmanager
@@ -67,6 +71,7 @@ def run_tests(fn, mark: str, *args):
             "python_functions='_test_*'",
             "-m",
             mark,
+            "-v",
         ]
         + list(args),
         fn,
